@@ -621,6 +621,7 @@ body{font-family:Arial,Helvetica,sans-serif;font-size:8.1px;line-height:1.06;tex
 .logo img{max-width:96px;height:auto;display:block;margin:0 auto} h1{margin:0 0 1px;font-size:13px;line-height:1.08} h2{font-size:10.5px;margin:5px 0 3px}
 .info,.section{width:100%;margin:0 0 2px;border-collapse:collapse;table-layout:fixed}.info td,.section th,.section td{border:1px solid #999;padding:1.7px 3.5px;vertical-align:middle}
 .info td,.section th,.section td{text-align:center}
+.section-text-left td{text-align:left!important;vertical-align:top}
 .section th{background:#e6eef7;font-size:7.8px}.td-num{text-align:center!important;white-space:nowrap}.status{display:inline-block;padding:0 3px;border-radius:2px;color:#fff;font-weight:bold;font-size:7.8px}
 .status-recepcion{background:#dc2626}.status-proceso{background:#ea580c}.status-terminado{background:#eab308;color:#000}.status-entregado{background:#16a34a}
 .saldo-row td{background:#dc2626;color:#fff;font-weight:bold}
@@ -643,8 +644,8 @@ body{font-family:Arial,Helvetica,sans-serif;font-size:8.1px;line-height:1.06;tex
 </style></head><body><table class="header-table"><tr><td class="header-col-logo"><div class="logo">'.($logoData !== '' ? '<img src="'.$logoData.'" alt="Logo">' : '&nbsp;').'</div></td><td class="header-col-title"><h1>Orden de Servicio</h1><div><strong>Folio:</strong> '.e((string) ($o['folio'] ?? '')).'</div></td><td class="header-col-client"><div><strong>Cliente:</strong> '.$this->short((string) ($o['nombre_cliente'] ?? ''), 80).'</div><div><strong>Atención (recepción):</strong> '.$this->short($tecnicoAtiende, 55).'</div><div><strong>Entrega al cliente:</strong> '.$this->short($tecnicoEntregaPdf, 55).'</div></td></tr></table>
 <table class="info"><tr><td colspan="2"><strong>Dirección:</strong> '.$this->short((string) ($o['direccion'] ?? ''), 150).'</td></tr><tr><td><strong>Teléfono:</strong> '.$this->short((string) ($o['telefono'] ?? ''), 30).'</td><td><strong>Correo:</strong> '.$this->short((string) ($o['correo'] ?? ''), 70).'</td></tr><tr><td><strong>Población:</strong> '.$this->short((string) ($o['poblacion'] ?? ''), 50).'</td><td><strong>Estatus:</strong> <span class="status '.$statusClass.'">'.e($status !== '' ? $status : '-').'</span></td></tr><tr><td><strong>Fecha entrada:</strong> '.e($fechaEntrada).'</td><td><strong>Fecha terminado:</strong> '.e($fechaTerminada).' | <strong>Fecha entrega:</strong> '.e($fechaSalida).'</td></tr></table>
 <h2>EQUIPOS</h2><table class="section"><thead><tr><th>MARCA</th><th>MODELO</th><th>SERIE</th><th>TIPO DE SERVICIO</th><th>DESCRIPCION</th></tr></thead><tbody>'.$rowsEquipos.'</tbody></table>
-<h2>Observaciones</h2><table class="section"><tbody><tr><td>'.$obsHtml.'</td></tr></tbody></table>
-<h2>Comentarios técnicos</h2><table class="section"><tbody><tr><td>'.$comentariosTecnicoHtml.'</td></tr></tbody></table>
+<h2>Observaciones</h2><table class="section section-text-left"><tbody><tr><td>'.$obsHtml.'</td></tr></tbody></table>
+<h2>Comentarios técnicos</h2><table class="section section-text-left"><tbody><tr><td>'.$comentariosTecnicoHtml.'</td></tr></tbody></table>
 <h2>TRABAJOS</h2><table class="section"><thead><tr><th>ID</th><th>CLAVE</th><th>DESCRIPCION</th><th>PRECIO SIN IVA</th><th>TICKET O FACTURA</th></tr></thead><tbody>'.$rowsTrab.'</tbody></table>
 <h2>MATERIALES</h2><table class="section"><thead><tr><th>VALE NO.</th><th>DESCRIPCION</th><th>CANTIDAD</th><th>PRECIO SIN IVA</th><th>IMPORTE</th><th>TICKET O FACTURA</th></tr></thead><tbody>'.$rowsMat.'</tbody></table>
 '.($rowsAnticipos !== '' ? '<h2>ANTICIPOS</h2><table class="section"><thead><tr><th>ID</th><th>FOLIO</th><th>DESCRIPCION</th><th>MONTO SIN IVA</th><th>TICKET/FACTURA</th></tr></thead><tbody>'.$rowsAnticipos.'</tbody></table>' : '').'
