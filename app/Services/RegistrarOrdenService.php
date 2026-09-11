@@ -2724,6 +2724,17 @@ $saldoPagadoConfirmado = (string) $request->input('saldo_pagado_confirmado', '')
                     $equipoColsIns[] = 'entrega_receptor_tipo';
                     $equipoColsIns[] = 'entrega_recibido_cliente';
                 }
+                if (
+                    Schema::hasColumn('equipos_orden', 'entrega_firma_cliente')
+                    && Schema::hasColumn('equipos_orden', 'entrega_firma_tecnico')
+                    && Schema::hasColumn('equipos_orden', 'entrega_tecnico')
+                    && Schema::hasColumn('equipos_orden', 'entrega_fecha')
+                ) {
+                    $equipoColsIns[] = 'entrega_firma_cliente';
+                    $equipoColsIns[] = 'entrega_firma_tecnico';
+                    $equipoColsIns[] = 'entrega_tecnico';
+                    $equipoColsIns[] = 'entrega_fecha';
+                }
                 $this->batchInsert(
                     'equipos_orden',
                     $equipoColsIns,
