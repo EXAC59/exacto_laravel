@@ -122,11 +122,14 @@ class OrderController extends Controller
 
             return response()->json([
                 'success' => false,
-                'message' => '❌ Error al guardar: '.$e->getMessage(),
+                'message' => 'No se pudo confirmar el guardado. Reintenta desde este formulario; se recuperará la orden si ya fue registrada.',
             ], 500);
         }
 
         $statusCode = $result['success'] ? 200 : 400;
+        if (($result['code'] ?? '') === 'order_submission_schema_missing') {
+            $statusCode = 503;
+        }
         if (($result['processing'] ?? false) || ($result['duplicate_submit'] ?? false)) {
             $statusCode = 202;
         }
@@ -300,18 +303,20 @@ class OrderController extends Controller
 
         // Calcular saldo pendiente
         $saldoPendiente = round($totalPagar - $totalRecibido, 2);
-        if ($totalRecibido >= $totalPagar) {
-            $saldoPendiente = 0;
+        if (abs($saldoPendiente) <= 0.011) {
+            $saldoPendiente = 0.0;
         }
 
         // Tolerancia de redondeo de $0.01
-        $valid = $saldoPendiente <= 0.009; // Considerar liquidado si es 0 o muy pequeño
+        $valid = abs($saldoPendiente) <= 0.009;
 
         return response()->json([
             'success' => true,
             'valid' => $valid,
             'saldo_pendiente' => number_format($saldoPendiente, 2),
-            'message' => $valid ? 'Saldo liquidado' : 'Queda un saldo pendiente de $'.number_format($saldoPendiente, 2),
+            'message' => $valid ? 'Saldo liquidado' : ($saldoPendiente < 0
+                ? 'Los pagos exceden el total de la orden. Revisa los pagos registrados.'
+                : 'Queda un saldo pendiente de $'.number_format($saldoPendiente, 2)),
             'total_pagar' => number_format($totalPagar, 2),
             'total_recibido' => number_format($totalRecibido, 2),
             'subtotal' => number_format($subtotalNeto, 2),
@@ -386,48 +391,17 @@ class OrderController extends Controller
         }
 
         $id = (int) $request->input('id_orden', 0);
-        $idsEquipo = array_map('intval', $request->input('ids_equipo', []));
 
         if ($id <= 0) {
             return response()->json(['success' => false, 'message' => 'Orden inválida.'], 400);
         }
-        if (empty($idsEquipo)) {
-            return response()->json(['success' => false, 'message' => 'No se seleccionaron equipos.'], 400);
-        }
-
         Gate::authorize('order-access', $id);
 
-        // Actualizar el estatus a 'Entregado' y marcar que fue liquidado por equipo
-        DB::beginTransaction();
-        try {
-            // Marcar los trabajos, materiales y anticipos con el id_equipo correspondientes
-            // (En una implementación completa, se actualizarían los registros)
-            // Por ahora, solo actualizamos el estatus de la orden
-            DB::table('orden_servicio_c')
-                ->where('id_orden_c', $id)
-                ->update(['estatus' => 'Entregado', 'fecha_salida' => now()]);
-
-            // Registrar log de liquidación por equipo
-            DB::insert(
-                'INSERT INTO `orden_servicio_tecnico_log` (id_orden_c, estatus, nombre_tecnico, fecha) VALUES (?, ?, ?, ?)',
-                [$id, 'Liquidado por Equipo', $user->nombre_tecnico ?? 'Sistema', now()->format('Y-m-d H:i:s')]
-            );
-
-            DB::commit();
-        } catch (\Throwable $e) {
-            DB::rollBack();
-            Log::channel('exacto_ops')->error('liquidar_saldo_equipo_exception', [
-                'id_orden' => $id,
-                'ids_equipo' => $idsEquipo,
-                'error' => $e->getMessage(),
-            ]);
-
-            return response()->json(['success' => false, 'message' => '❌ Error al liquidar: '.$e->getMessage()], 500);
-        }
-
+        // Este endpoint legado no registra pagos y no lo usa el formulario actual.
+        // La liquidación se guarda mediante registrar, que valida pagos y firmas.
         return response()->json([
-            'success' => true,
-            'message' => 'Saldo liquidado exitosamente para los equipos seleccionados.',
-        ]);
+            'success' => false,
+            'message' => 'Liquida el saldo y guarda desde el formulario de la orden de servicio.',
+        ], 409);
     }
 }

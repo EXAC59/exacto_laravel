@@ -1379,6 +1379,10 @@ function exactoAplicarConversionNetoASinIva(input) {
         }
 
         let exactoOrdenSubmitInFlight = false;
+        let exactoOrdenSubmitPreparing = false;
+        let exactoGuardadoPendiente = null;
+        let exactoSubmissionToken = '';
+        let exactoSersop01AbonoAplicado = 0;
         let exactoOrdenFormTieneCambios = false;
         let exactoOrdenPermitirSalirSinConfirmar = false;
 
@@ -1549,6 +1553,8 @@ function exactoAplicarConversionNetoASinIva(input) {
                 anticipos,
                 observaciones_items: exactoLeerTextosObservaciones(),
                 abono_saldo: pick('#abonoSaldoAplicado'),
+                submission_token: exactoSubmissionToken,
+                sersop01_abono_auto: exactoSersop01AbonoAplicado,
                 saldo_pagado_confirmado: pick('#saldoPagadoConfirmado'),
                 sersop01,
                 firmas: {
@@ -1754,7 +1760,10 @@ function exactoAplicarConversionNetoASinIva(input) {
                         const imp = box.querySelector('input[name*="[importe]"]');
                         if (imp) imp.value = String(draft.sersop01.importe);
                     }
+                    exactoSersop01AbonoAplicado = Number(draft.sersop01_abono_auto
+                        ?? Math.min(Number(draft.sersop01.importe || 603.45), Number(draft.abono_saldo || 0)));
                 }
+                exactoSubmissionToken = String(draft.submission_token || '');
 
                 if (typeof calcularTotalFactura === 'function') {
                     try { calcularTotalFactura(); } catch (_) { /* ignore */ }
@@ -3686,6 +3695,12 @@ function exactoAplicarConversionNetoASinIva(input) {
         }
 
         function exactoQuitarSersop01Oculto() {
+            if (exactoSersop01AbonoAplicado > 0) {
+                exactoSetAbonoSaldo(exactoTotalAbonoSaldo() - exactoSersop01AbonoAplicado);
+                exactoSersop01AbonoAplicado = 0;
+                const confirmado = document.getElementById('saldoPagadoConfirmado');
+                if (confirmado) confirmado.value = '0';
+            }
             const box = document.getElementById('exactoSersop01Campos');
             if (box) {
                 box.innerHTML = '';
@@ -3822,6 +3837,7 @@ function exactoAplicarConversionNetoASinIva(input) {
             box.appendChild(mk('descripcion', descripcion));
             box.appendChild(mk('importe', precio));
             box.appendChild(mk('ticket', ticketNorm));
+            calcularTotalFactura();
             return box;
         }
 
@@ -3831,11 +3847,15 @@ function exactoAplicarConversionNetoASinIva(input) {
          * - Si pagó: pide ticket/factura y registra SERSOP01 oculto.
          */
         async function exactoConfirmarCobroSersop01RevisionNueva() {
-            exactoQuitarSersop01Oculto();
-
             if (!exactoEsOrdenNueva()) {
                 return true;
             }
+            // Conservar la elección de pago al reintentar; no volver a sumar el mismo abono.
+            if (exactoSersop01AbonoAplicado > 0
+                && document.querySelector('#ordenForm [data-sersop01-auto="1"]')) {
+                return true;
+            }
+            exactoQuitarSersop01Oculto();
             // Si el técnico ya eligió SERSOP01 a mano, no duplicar el cobro oculto.
             if (exactoFormularioYaTieneSersop01Visible()) {
                 return true;
@@ -3903,6 +3923,7 @@ function exactoAplicarConversionNetoASinIva(input) {
             // Cliente pagó la revisión: abonar el monto sin IVA para que el saldo refleje el pago.
             exactoAsegurarCamposAbonoNuevaOrden();
             exactoSetAbonoSaldo(exactoTotalAbonoSaldo() + precioSinIva);
+            exactoSersop01AbonoAplicado = precioSinIva;
             if (typeof calcularSaldoPendiente === 'function') {
                 try { calcularSaldoPendiente(); } catch (_) { /* ignore */ }
             }
@@ -4047,7 +4068,10 @@ function exactoAplicarConversionNetoASinIva(input) {
         }
         function exactoTotalTrabajosSinIva() {
             let total = 0;
-            document.querySelectorAll('.importe-input').forEach((input) => { total += parseFloat(input.value) || 0; });
+            // Incluye SERSOP01 oculto en recepción, donde no existe tabla de trabajos.
+            document.querySelectorAll('#ordenForm [name^="trabajos["][name$="[importe]"]').forEach((input) => {
+                if (!input.disabled) total += parseFloat(input.value) || 0;
+            });
             return total;
         }
 
@@ -4956,19 +4980,12 @@ function exactoAplicarConversionNetoASinIva(input) {
         }
 
         // ENVÍO DEL FORMULARIO
-        document.getElementById('ordenForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
-            const form = this;
+        async function exactoPrepararGuardadoOrden(form) {
 
             // Si el usuario guarda con el cursor aún en precio/monto neto, convertir antes de validar/enviar.
             form.querySelectorAll('.precio-input, .anticipo-input').forEach((input) => {
                 exactoAplicarConversionNetoASinIva(input);
             });
-
-            if (exactoOrdenSubmitInFlight) {
-                exactoMostrarEstadoGuardado('info', 'La orden ya se está guardando. Espera a que termine el envío del correo.');
-                return;
-            }
 
             exactoOcultarEstadoGuardado();
 
@@ -5007,26 +5024,14 @@ function exactoAplicarConversionNetoASinIva(input) {
                 return;
             }
 
-            const permitirNegativos = exactoHayNumerosNegativos()
-                ? await exactoShowConfirm('La orden contiene números negativos. ¿Deseas aceptar y guardar la orden así?', {
-                    title: 'Confirmar importes',
-                    confirmText: 'Sí, guardar',
-                    cancelText: 'Revisar',
-                })
-                : false;
-            if (exactoHayNumerosNegativos() && !permitirNegativos) {
+            if (exactoHayNumerosNegativos()) {
+                await exactoShowAlert('Los importes no pueden ser negativos. Revisa los cargos y pagos.', { title: 'Revisar importes' });
                 exactoMostrarBannerFirmasDeshabilitadasSiAplica();
                 return;
             }
             const saldoPendiente = exactoSaldoPendienteActual();
-            const permitirSaldoNegativo = saldoPendiente < -0.009
-                ? await exactoShowConfirm('El saldo pendiente queda en número negativo. ¿Deseas aceptar y guardar la orden así?', {
-                    title: 'Confirmar saldo negativo',
-                    confirmText: 'Sí, guardar',
-                    cancelText: 'Revisar',
-                })
-                : false;
-            if (saldoPendiente < -0.009 && !permitirSaldoNegativo) {
+            if (saldoPendiente < -0.011) {
+                await exactoShowAlert('Los pagos exceden el total de la orden. Revisa el abono y los anticipos antes de guardar.', { title: 'Revisar pagos' });
                 exactoMostrarBannerFirmasDeshabilitadasSiAplica();
                 return;
             }
@@ -5070,17 +5075,11 @@ function exactoAplicarConversionNetoASinIva(input) {
             }
 
             exactoHabilitarCamposTicketParaEnvio();
-            const formData = new FormData(this);
+            const formData = new FormData(form);
             formData.delete('observaciones[]');
             exactoLeerTextosObservaciones().forEach((texto) => {
                 formData.append('observaciones[]', texto);
             });
-            if (permitirNegativos) {
-                formData.append('permitir_negativos', '1');
-            }
-            if (permitirSaldoNegativo) {
-                formData.append('permitir_saldo_negativo', '1');
-            }
             const firmaPngVacia = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
             if (window.EXACTO_ORDEN_FIRMAS_DESHABILITADAS) {
@@ -5144,7 +5143,32 @@ function exactoAplicarConversionNetoASinIva(input) {
                 return;
             }
 
-            exactoMarcarGuardadoEnCurso('Guardando orden y enviando correo, espere...');
+            if (exactoEsOrdenNueva()) {
+                if (!exactoSubmissionToken) {
+                    exactoSubmissionToken = globalThis.crypto.randomUUID
+                        ? globalThis.crypto.randomUUID()
+                        : Array.from(globalThis.crypto.getRandomValues(new Uint8Array(16)), (n) => n.toString(16).padStart(2, '0')).join('');
+                }
+                formData.set('submission_token', exactoSubmissionToken);
+            }
+            exactoGuardarBorradorOrdenLocal();
+            return { formData, salidaTemporalCapturada };
+        }
+
+        document.getElementById('ordenForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            if (exactoOrdenSubmitPreparing || exactoOrdenSubmitInFlight) return;
+            exactoOrdenSubmitPreparing = true;
+            let pendiente;
+            try {
+                pendiente = exactoGuardadoPendiente || await exactoPrepararGuardadoOrden(this);
+                if (!pendiente) return;
+                exactoGuardadoPendiente = pendiente;
+            } finally {
+                exactoOrdenSubmitPreparing = false;
+            }
+            const { formData, salidaTemporalCapturada } = pendiente;
+            exactoMarcarGuardadoEnCurso('Guardando orden, espere...');
             let requiereLiberarGuardado = true;
 
             try {
@@ -5163,26 +5187,27 @@ function exactoAplicarConversionNetoASinIva(input) {
                 try {
                     data = raw.trim() === '' ? {} : JSON.parse(raw);
                 } catch (parseErr) {
-                    const snippet = raw.replace(/\s+/g, ' ').trim().slice(0, 280);
                     exactoLiberarGuardado({
                         keepNotice: true,
                         type: 'error',
-                        message: 'No se pudo guardar la orden. El servidor devolvió una respuesta inválida.',
+                        message: 'No se pudo confirmar el guardado. Reintenta desde este formulario para recuperar la orden.',
                     });
                     requiereLiberarGuardado = false;
                     await exactoShowAlert(
-                        '❌ Error al guardar: el servidor no devolvió JSON válido (HTTP ' +
-                            response.status +
-                            '). Suele ser un aviso o error de PHP en la respuesta. Revisa la consola (F12) o el log de PHP. ' +
-                            (snippet ? 'Fragmento: ' + snippet : ''),
+                        'No se pudo confirmar el guardado. Reintenta desde este formulario; se recuperará la orden si ya fue registrada.',
                         { title: 'Error al guardar', icon: 'error' }
                     );
-                    console.error('registrar_orden respuesta cruda:', raw);
+                    console.error('Respuesta de guardado inválida, HTTP', response.status);
                     exactoMostrarBannerFirmasDeshabilitadasSiAplica();
                     return;
                 }
 
                 if (data.success) {
+                    exactoGuardadoPendiente = null;
+                    // Bloquear una segunda creación incluso si falla el PDF o una acción posterior.
+                    const idGuardado = Number(data.idOrden || data.id_orden_c || 0);
+                    const campoId = this.querySelector('[name="id_orden_c"]');
+                    if (campoId && idGuardado > 0) campoId.value = String(idGuardado);
                     const estadoCorreo = String(data.email_notice_level || '').toLowerCase();
                     const hayAvisoCorreo = Boolean(String(data.email_notice || '').trim());
                     const hayCorreoCliente = Boolean(
@@ -5279,6 +5304,8 @@ function exactoAplicarConversionNetoASinIva(input) {
                     });
                     requiereLiberarGuardado = false;
                 } else {
+                    // Solo una respuesta de validación permite preparar un envío distinto.
+                    if (response.status === 400 || response.status === 422) exactoGuardadoPendiente = null;
                     const mensajeError = String(data.message || '').trim()
                         || (data.email_notice_level === 'error' && data.email_notice ? data.email_notice : '')
                         || 'No se pudo guardar la orden. Revisa el aviso e intenta nuevamente.';
@@ -5305,10 +5332,10 @@ function exactoAplicarConversionNetoASinIva(input) {
                 exactoLiberarGuardado({
                     keepNotice: true,
                     type: 'error',
-                    message: 'No se pudo completar el guardado. Verifica la conexión e intenta de nuevo.',
+                    message: 'No se pudo confirmar el guardado. Reintenta desde este formulario; se recuperará la orden si ya fue registrada.',
                 });
                 requiereLiberarGuardado = false;
-                await exactoShowAlert('❌ Error al guardar: ' + error.message, {
+                await exactoShowAlert('No se pudo confirmar el guardado. Verifica la conexión y reintenta desde este formulario para recuperar la misma orden.', {
                     title: 'Error al guardar',
                     icon: 'error',
                 });

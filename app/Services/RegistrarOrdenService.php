@@ -7,6 +7,7 @@ namespace App\Services;
 use App\Models\User;
 use App\Support\ExactoAuthContext;
 use App\Support\OrderStatus;
+use App\Support\OrderMoney;
 use App\Support\WhatsappPhone;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -33,7 +34,8 @@ final class RegistrarOrdenService
         private readonly OrderEmailService $orderEmail,
         private readonly OrderWhatsappService $orderWhatsapp,
         private readonly OrdenEditLockService $editLocks,
-        private readonly FolioSequenceService $folios
+        private readonly FolioSequenceService $folios,
+        private readonly OrderSubmissionService $submissions
     ) {}
 
     private function textoMayusculas(string $valor): string
@@ -357,14 +359,22 @@ final class RegistrarOrdenService
         }
         $emailNotice = ['message' => null, 'level' => null];
         if ($sendEmail) {
-            $emailProbe = $this->probeCorreoFormatoLocal($correoPlano);
-            $emailResult = $this->orderEmail->queueForStatusWithResult(
-                $idOrdenC,
-                $estatusCanon,
-                $emailProbe,
-                $notificationPayload
-            );
-            $emailNotice = $this->emailNoticeData($emailResult, $emailProbe);
+            try {
+                $emailProbe = $this->probeCorreoFormatoLocal($correoPlano);
+                $emailResult = $this->orderEmail->queueForStatusWithResult(
+                    $idOrdenC,
+                    $estatusCanon,
+                    $emailProbe,
+                    $notificationPayload
+                );
+                $emailNotice = $this->emailNoticeData($emailResult, $emailProbe);
+            } catch (\Throwable $e) {
+                report($e);
+                $emailNotice = [
+                    'message' => 'La orden se guardó; no se pudo programar el correo. Puedes reenviarlo desde la orden.',
+                    'level' => 'error',
+                ];
+            }
         }
 
         $waProbe = ['status' => 'skipped', 'phone' => '', 'message' => ''];
@@ -1072,6 +1082,14 @@ final class RegistrarOrdenService
         $rowPlaceholder = '('.implode(', ', array_fill(0, count($columns), '?')).')';
 
         foreach (array_chunk($rows, $chunkSize) as $chunk) {
+            if ($ignore) {
+                DB::table($table)->insertOrIgnore(array_map(
+                    static fn (array $row): array => array_combine($columns, $row),
+                    $chunk
+                ));
+
+                continue;
+            }
             $bindings = [];
             foreach ($chunk as $row) {
                 foreach ($row as $value) {
@@ -1618,7 +1636,27 @@ final class RegistrarOrdenService
      */
     public function handle(Request $request, User $user): array
     {
-        $lockKey = $this->submissionLockKey($request, $user);
+        $submissionKey = null;
+        if ((int) $request->input('id_orden_c', 0) <= 0) {
+            $token = $request->input('submission_token');
+            if (! is_string($token) || ! preg_match('/^[A-Za-z0-9_-]{16,100}$/D', $token)) {
+                return ['success' => false, 'message' => 'Recarga el formulario antes de crear la orden para activar la protección contra duplicados.'];
+            }
+            if (! Schema::hasTable('order_submissions')) {
+                return [
+                    'success' => false,
+                    'code' => 'order_submission_schema_missing',
+                    'message' => 'No se guardó la orden: falta completar una actualización de la base de datos. El administrador debe ejecutar el script de protección contra duplicados incluido en el paquete.',
+                ];
+            }
+            $submissionKey = hash('sha256', (string) $user->getAuthIdentifier().'|'.$token);
+            $request->attributes->set('order_submission_key', $submissionKey);
+            $completed = $this->submissions->completed($submissionKey);
+            if ($completed !== null) {
+                return $this->submissions->replay($completed);
+            }
+        }
+        $lockKey = $submissionKey === null ? $this->submissionLockKey($request, $user) : 'exacto:order-submit:'.$submissionKey;
         if (! $this->acquireSubmissionLock($lockKey)) {
             return [
                 'success' => false,
@@ -1630,6 +1668,10 @@ final class RegistrarOrdenService
 
         try {
             $this->ensureSchema();
+            $moneyError = OrderMoney::validatePayload($request->all());
+            if ($moneyError !== null) {
+                return ['success' => false, 'message' => $moneyError];
+            }
 
             $idOrdenEditar = (int) $request->input('id_orden_c', 0);
             $modoCompletar = (string) $request->input('modo_completar', '') === '1';
@@ -1775,13 +1817,16 @@ final class RegistrarOrdenService
         foreach ($anticiposIn as $anticipo) {
             $hayNegativos = $hayNegativos || (float) ($anticipo['monto'] ?? 0) < 0;
         }
-$hayNegativos = $hayNegativos || $abonoSaldoTotal < 0;
-$saldoPendienteCalc = round($totalPagar - $totalRecibido, 2);
-// Si el total recibido cubre o supera el total a pagar, saldo = 0
-if ($totalRecibido >= $totalPagar) {
-    $saldoPendienteCalc = 0;
-}
-$saldoPagadoConfirmado = (string) $request->input('saldo_pagado_confirmado', '') === '1'
+        $hayNegativos = $hayNegativos || $abonoSaldoTotal < 0;
+        $saldoPendienteCalc = round($totalPagar - $totalRecibido, 2);
+        // No ocultar un pago duplicado convirtiendo un saldo negativo a cero.
+        if ($saldoPendienteCalc < -0.011) {
+            return ['success' => false, 'message' => 'Los pagos exceden el total de la orden. Revisa el abono y los anticipos antes de guardar.'];
+        }
+        if (abs($saldoPendienteCalc) <= 0.011 && $totalRecibido > 0.009) {
+            $saldoPendienteCalc = 0.0;
+        }
+        $saldoPagadoConfirmado = (string) $request->input('saldo_pagado_confirmado', '') === '1'
             || (string) $request->input('saldoPagadoConfirmado', '') === '1';
         // Si la orden queda liquidada con pagos (anticipos/abono), exigir confirmación "cliente pagó".
         if ($totalPagar > 0.009 && abs($saldoPendienteCalc) <= 0.009 && $totalRecibido > 0.009 && ! $saldoPagadoConfirmado) {
@@ -1796,7 +1841,7 @@ $saldoPagadoConfirmado = (string) $request->input('saldo_pagado_confirmado', '')
         if (
             $estatusCanon === 'Entregado'
             && ! $entregaPorEquipoReq
-            && abs($totalPagar - $totalRecibido) > 0.009
+            && abs($saldoPendienteCalc) > 0.009
         ) {
             return ['success' => false, 'message' => 'Para guardar como Entregado, el saldo pendiente debe quedar liquidado en $0.00.'];
         }
@@ -2491,7 +2536,8 @@ $saldoPagadoConfirmado = (string) $request->input('saldo_pagado_confirmado', '')
                 DB::rollBack();
             }
 
-            return ['success' => false, 'message' => '❌ Error: '.$e->getMessage()];
+            report($e);
+            return ['success' => false, 'message' => 'No se pudo guardar la orden. Revisa los datos o consulta el registro de errores del servidor.'];
         }
 
         $this->audit->log($idOrdenEditar, $folioStr, 'orden_actualizada', [
@@ -2686,6 +2732,11 @@ $saldoPagadoConfirmado = (string) $request->input('saldo_pagado_confirmado', '')
                 $anticiposIn,
                 $abonoSaldoTotal
             ) {
+                $submissionKey = (string) $request->attributes->get('order_submission_key');
+                $completed = $this->submissions->claim($submissionKey);
+                if ($completed !== null) {
+                    return $this->submissions->replay($completed);
+                }
                 $estCanonIns = $this->mapEstatusCanon($estatus);
                 [$fechaTerminadaPost, $fechaSalidaPost] = $this->fechasTallerSegunEstatus($estCanonIns, $fechaTerminadaPost, $fechaSalidaPost);
 
@@ -2781,16 +2832,24 @@ $saldoPagadoConfirmado = (string) $request->input('saldo_pagado_confirmado', '')
                     $this->registrarInvolucradoSiCambio($idOrdenC, $estatus, $tecnicoLog);
                 }
 
-                return [
+                $result = [
                     'folio' => $folioNuevo,
                     'idOrden' => $idOrdenC,
                     'folio_reutilizado' => (bool) ($folioReserva['reutilizado'] ?? false),
                     'folio_numero' => (int) ($folioReserva['numero'] ?? 0),
                     'folio_anio' => (int) ($folioReserva['anio'] ?? 0),
                 ];
-            });
+                $this->submissions->complete($submissionKey, $result);
+
+                return $result;
+            }, 3);
         } catch (\Throwable $e) {
-            return ['success' => false, 'message' => '❌ Error: '.$e->getMessage()];
+            report($e);
+            return ['success' => false, 'message' => 'No se pudo guardar la orden. Revisa los datos o consulta el registro de errores del servidor.'];
+        }
+
+        if ($insertResult['replayed'] ?? false) {
+            return $insertResult;
         }
 
         $this->audit->log((int) $insertResult['idOrden'], $insertResult['folio'], 'orden_creada', [

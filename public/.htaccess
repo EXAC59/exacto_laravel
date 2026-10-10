@@ -1,3 +1,8 @@
+# Herramientas temporales con claves fijas: no deben ejecutarse desde Internet.
+<FilesMatch "^(docheck|wa_test_send|wa_analizar|repair-registrar-orden|diagnose-[a-z-]+|exacto-asegurar-columnas-equipos|generate_og_image)\.php$">
+    Require all denied
+</FilesMatch>
+
 <IfModule mod_rewrite.c>
     <IfModule mod_negotiation.c>
         Options -MultiViews -Indexes
