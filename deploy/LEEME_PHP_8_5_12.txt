@@ -1,0 +1,60 @@
+ACTUALIZACION DE EXACTO PARA PHP 8.5.12 - 21/10/2026
+
+IMPORTANTE
+Este ZIP contiene la aplicacion Laravel y sus dependencias de produccion.
+NO instala ni cambia el interprete PHP del servidor. En cPanel, si PHP 8.5
+no aparece en MultiPHP Manager, el proveedor debe instalarlo o habilitarlo
+desde WHM / EasyApache 4. La version corregida de hoy es 8.5.12.
+Como alternativas parcheadas, PHP 8.4.27 y PHP 8.3.36 tambien corrigen
+las vulnerabilidades. PHP 8.5.11, 8.4.26 y 8.3.35 no son suficientes.
+
+ESTADO OBSERVADO EL 21/10/2026
+https://soporte.exactolp.mx/, /login y /up responden HTTP 200 despues de
+regenerar packages.php y services.php. La respuesta efectiva del servidor
+indica X-Powered-By: PHP/8.4.26, aunque MultiPHP Manager muestra PHP 8.5
+(alt-php85) para el subdominio. El proveedor debe corregir esta discrepancia
+y activar una version parcheada. El ZIP de la aplicacion no corrige la
+vulnerabilidad del interprete.
+
+ANTES DE SUBIR
+1. Solicitar al proveedor PHP 8.5.12 para soporte.exactolp.mx y confirmar
+   que esten activas mbstring, openssl, fileinfo, dom, libxml, pdo_mysql,
+   curl, gd, intl y zip. Confirmar la version efectiva mediante una respuesta
+   nueva del sitio; la seleccion de MultiPHP no coincide con ella actualmente.
+   Composer comprueba las extensiones obligatorias.
+2. Respaldar los archivos actuales y la base de datos.
+3. Confirmar con el proveedor la version PHP efectiva del subdominio; la
+   version mostrada por MultiPHP Manager no basta en este caso.
+
+INSTALACION DEL ZIP
+1. En Administrador de archivos de cPanel, abrir la carpeta del proyecto
+   Laravel, donde esta artisan; segun la documentacion local es
+   /home/joses16/soporte.exactolp.mx.
+2. Subir este ZIP y extraerlo ALLI, no dentro de public/. Aceptar reemplazar
+   solamente los archivos incluidos.
+3. Conservar .env, storage/, las firmas, archivos cargados y la base de datos.
+   El ZIP no los contiene. No ejecutar migraciones por este cambio de PHP.
+4. En bootstrap/cache, borrar packages.php y services.php. El registro del
+   21/10/2026 muestra que esos caches antiguos intentan cargar el proveedor
+   de desarrollo Laravel\\Pail\\PailServiceProvider, ausente en produccion.
+   No borrar la carpeta ni .gitignore. Laravel regenerara ambos archivos.
+5. En terminal, usar el ejecutable PHP del hosting para ejecutar
+   "php artisan optimize:clear" y "php artisan view:clear". La ruta del
+   ejecutable puede diferir del "php" predeterminado: confirmarla con el
+   proveedor. Si no hay terminal, borrar tambien config.php y routes-*.php
+   en bootstrap/cache y las vistas compiladas .php en
+   storage/framework/views, dejando las carpetas y .gitignore.
+6. Probar https://soporte.exactolp.mx/up y luego /login.
+
+SI PERSISTE EL ERROR HTTP 500
+Revisar en cPanel > Errores y en storage/logs/laravel.log el error nuevo.
+Un fallo reproducido al iniciar con PHP 8.5 sin mbstring fue
+"Call to undefined function Illuminate\\Support\\mb_split()".
+No se puede confirmar que sea la causa del servidor sin ese registro.
+Enviar el texto del error al proveedor o compartirlo para corregir la causa.
+No activar APP_DEBUG en el sitio publico.
+
+VERIFICACION LOCAL
+PHP 8.5.12 oficial para Windows: 296 archivos PHP sin errores de sintaxis;
+91 pruebas aprobadas y 2 omitidas. Esto no comprueba la configuracion
+de PHP ni las extensiones del hosting.
